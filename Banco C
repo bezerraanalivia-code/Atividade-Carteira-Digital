@@ -1,1 +1,419 @@
+#include "meu_banco.h"
 
+/* Procura uma conta pelo numero e informa onde ela esta no vetor. */
+int localizarConta(Banco *b, int numero, int *posCliente, int *posConta) {
+    int i, j;
+
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        for (j = 0; j < b->clientes[i].quantidadeContas; j++) {
+            if (b->clientes[i].contas[j].numero == numero) {
+                *posCliente = i;
+                *posConta = j;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Retorna a posicao da conta de determinado tipo. */
+int indiceTipo(Cliente *c, int tipo) {
+    int i;
+
+    for (i = 0; i < c->quantidadeContas; i++) {
+        if (c->contas[i].tipo == tipo)
+            return i;
+    }
+    return -1;
+}
+
+float saldoTotal(Cliente *c) {
+    float total = 0;
+    int i;
+
+    for (i = 0; i < c->quantidadeContas; i++)
+        total += c->contas[i].saldo;
+
+    return total;
+}
+
+int clienteApto(Cliente *c) {
+    int poupanca = indiceTipo(c, POUPANCA);
+
+    return indiceTipo(c, CORRENTE) != -1 &&
+           poupanca != -1 && c->contas[poupanca].saldo > 0 &&
+           saldoTotal(c) > 0 && !c->emprestimoRealizado;
+}
+
+/* Mantem somente as cinco transacoes mais recentes. */
+void registrarTransacao(Cliente *c, char tipo, float valor, int numero) {
+    int i, pos;
+
+    if (c->quantidadeTransacoes < MAX_HISTORICO) {
+        pos = c->quantidadeTransacoes;
+        c->quantidadeTransacoes++;
+    } else {
+        for (i = 0; i < MAX_HISTORICO - 1; i++)
+            c->historico[i] = c->historico[i + 1];
+        pos = MAX_HISTORICO - 1;
+    }
+
+    c->historico[pos].tipo = tipo;
+    c->historico[pos].valor = valor;
+    c->historico[pos].numeroConta = numero;
+    c->historico[pos].dataHora = time(NULL);
+}
+
+/* Abre o arquivo e recupera os clientes cadastrados anteriormente. */
+void inicializarBanco(Banco *b) {
+    FILE *arq;
+    int quantidade, proximo;
+
+    b->clientes = NULL;
+    b->quantidadeClientes = 0;
+    b->proximoNumeroConta = 1000;
+    b->aberto = 1;
+
+    arq = fopen("banco.dat", "rb");
+    if (arq == NULL)
+        return;
+
+    if (fread(&quantidade, sizeof(int), 1, arq) != 1 ||
+        fread(&proximo, sizeof(int), 1, arq) != 1 || quantidade < 0) {
+        fclose(arq);
+        return;
+    }
+
+    if (quantidade > 0) {
+        b->clientes = malloc(quantidade * sizeof(Cliente));
+        if (b->clientes == NULL) {
+            fclose(arq);
+            return;
+        }
+
+        if (fread(b->clientes, sizeof(Cliente), quantidade, arq) !=
+            (size_t)quantidade) {
+            free(b->clientes);
+            b->clientes = NULL;
+            fclose(arq);
+            return;
+        }
+    }
+
+    b->quantidadeClientes = quantidade;
+    b->proximoNumeroConta = proximo;
+    fclose(arq);
+}
+
+/* Grava a quantidade, o proximo numero e todos os clientes. */
+int salvarBanco(Banco *b) {
+    FILE *arq = fopen("banco.dat", "wb");
+
+    if (arq == NULL) {
+        printf("Erro ao abrir o arquivo para gravacao.\n");
+        return 0;
+    }
+
+    if (fwrite(&b->quantidadeClientes, sizeof(int), 1, arq) != 1 ||
+        fwrite(&b->proximoNumeroConta, sizeof(int), 1, arq) != 1) {
+        fclose(arq);
+        return 0;
+    }
+
+    if (b->quantidadeClientes > 0 &&
+        fwrite(b->clientes, sizeof(Cliente), b->quantidadeClientes, arq) !=
+        (size_t)b->quantidadeClientes) {
+        fclose(arq);
+        return 0;
+    }
+
+    fclose(arq);
+    return 1;
+}
+
+void liberarBanco(Banco *b) {
+    free(b->clientes);
+    b->clientes = NULL;
+}
+
+void abrirBanco(Banco *b) {
+    b->aberto = 1;
+    printf("Banco aberto.\n");
+}
+
+void fecharBanco(Banco *b) {
+    b->aberto = 0;
+    printf("Banco fechado.\n");
+}
+
+/* Cadastra um cliente com uma conta ou com uma combinacao permitida. */
+void cadastrarCliente(Banco *b) {
+    Cliente novo = {0};
+    Cliente *temporario;
+    int tipo1, tipo2, resposta, valido = 0;
+
+    printf("Nome do cliente: ");
+    scanf(" %49[^\n]", novo.cliente);
+
+    printf("Tipo da conta (1-Corrente, 2-Salario, 3-Poupanca): ");
+    scanf("%d", &tipo1);
+    if (tipo1 < CORRENTE || tipo1 > POUPANCA) {
+        printf("Tipo invalido.\n");
+        return;
+    }
+
+    novo.contas[0].tipo = tipo1;
+    printf("Saldo inicial: R$ ");
+    scanf("%f", &novo.contas[0].saldo);
+    novo.quantidadeContas = 1;
+
+    printf("Deseja cadastrar uma segunda conta? (1-Sim / 0-Nao): ");
+    scanf("%d", &resposta);
+
+    if (resposta == 1) {
+        printf("Tipo da segunda conta (1-Corrente, 2-Salario, 3-Poupanca): ");
+        scanf("%d", &tipo2);
+
+        if ((tipo1 == CORRENTE && tipo2 == POUPANCA) ||
+            (tipo1 == SALARIO && tipo2 == POUPANCA) ||
+            (tipo1 == POUPANCA &&
+             (tipo2 == CORRENTE || tipo2 == SALARIO)))
+            valido = 1;
+
+        if (valido) {
+            novo.contas[1].tipo = tipo2;
+            printf("Saldo inicial da segunda conta: R$ ");
+            scanf("%f", &novo.contas[1].saldo);
+            novo.quantidadeContas = 2;
+        } else {
+            printf("Combinacao nao permitida. Sera criada apenas uma conta.\n");
+        }
+    }
+
+    temporario = realloc(b->clientes,
+                         (b->quantidadeClientes + 1) * sizeof(Cliente));
+    if (temporario == NULL) {
+        printf("Erro ao reservar memoria.\n");
+        return;
+    }
+
+    b->clientes = temporario;
+    novo.contas[0].numero = b->proximoNumeroConta++;
+    if (novo.quantidadeContas == 2)
+        novo.contas[1].numero = b->proximoNumeroConta++;
+
+    b->clientes[b->quantidadeClientes] = novo;
+    b->quantidadeClientes++;
+
+    printf("Cliente cadastrado. Conta(s): %d", novo.contas[0].numero);
+    if (novo.quantidadeContas == 2)
+        printf(" e %d", novo.contas[1].numero);
+    printf("\n");
+
+    salvarBanco(b);
+}
+
+/* A mesma funcao realiza deposito ou saque, conforme a operacao recebida. */
+void movimentar(Banco *b, char operacao) {
+    int numero, iCliente, iConta;
+    float valor;
+    Cliente *cliente;
+    Conta *conta;
+
+    printf("Numero da conta: ");
+    scanf("%d", &numero);
+
+    if (!localizarConta(b, numero, &iCliente, &iConta)) {
+        printf("Conta nao encontrada.\n");
+        return;
+    }
+
+    printf("Valor: R$ ");
+    scanf("%f", &valor);
+    if (valor <= 0) {
+        printf("Valor invalido.\n");
+        return;
+    }
+
+    cliente = &b->clientes[iCliente];
+    conta = &cliente->contas[iConta];
+
+    if (operacao == 'S' && conta->tipo != CORRENTE && valor > conta->saldo) {
+        printf("Saldo insuficiente.\n");
+        return;
+    }
+
+    if (operacao == 'D')
+        conta->saldo += valor;
+    else
+        conta->saldo -= valor;
+
+    registrarTransacao(cliente, operacao, valor, numero);
+    printf("Operacao realizada. Saldo: R$ %.2f\n", conta->saldo);
+    salvarBanco(b);
+}
+
+void solicitarEmprestimo(Banco *b) {
+    int numero, iCliente, iConta, poupanca;
+    float valor;
+    Cliente *cliente;
+
+    printf("Numero da conta corrente: ");
+    scanf("%d", &numero);
+
+    if (!localizarConta(b, numero, &iCliente, &iConta)) {
+        printf("Conta nao encontrada.\n");
+        return;
+    }
+
+    cliente = &b->clientes[iCliente];
+    if (cliente->contas[iConta].tipo != CORRENTE || !clienteApto(cliente)) {
+        printf("Cliente nao apto ao emprestimo.\n");
+        return;
+    }
+
+    poupanca = indiceTipo(cliente, POUPANCA);
+    valor = 2.5f * saldoTotal(cliente);
+    cliente->contas[poupanca].saldo += valor;
+    cliente->emprestimoRealizado = 1;
+
+    registrarTransacao(cliente, 'E', valor,
+                       cliente->contas[poupanca].numero);
+    printf("Emprestimo aprovado: R$ %.2f\n", valor);
+    salvarBanco(b);
+}
+
+void consultarHistorico(Banco *b) {
+    int i, j;
+    char data[30];
+    struct tm *tempo;
+
+    if (!b->aberto) {
+        printf("Banco fechado. Historico indisponivel.\n");
+        return;
+    }
+
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        Cliente *c = &b->clientes[i];
+        printf("\nHistorico de %s:\n", c->cliente);
+
+        if (c->quantidadeTransacoes == 0) {
+            printf("Sem transacoes.\n");
+            continue;
+        }
+
+        for (j = 0; j < c->quantidadeTransacoes; j++) {
+            tempo = localtime(&c->historico[j].dataHora);
+            if (tempo != NULL)
+                strftime(data, sizeof(data), "%d/%m/%Y %H:%M:%S", tempo);
+            else
+                strcpy(data, "Data indisponivel");
+
+            printf("%c | Conta %d | R$ %.2f | %s\n",
+                   c->historico[j].tipo, c->historico[j].numeroConta,
+                   c->historico[j].valor, data);
+        }
+    }
+}
+
+void mostrarRelatorios(Banco *b) {
+    int i, corrente, salario;
+    float total = 0;
+
+    for (i = 0; i < b->quantidadeClientes; i++)
+        total += saldoTotal(&b->clientes[i]);
+
+    printf("\n== SALDO TOTAL DO BANCO ==\n");
+    printf("R$ %.2f | %d clientes\n", total, b->quantidadeClientes);
+
+    printf("\n== CLIENTES APTOS A EMPRESTIMO ==\n");
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        Cliente *c = &b->clientes[i];
+        corrente = indiceTipo(c, CORRENTE);
+        if (clienteApto(c))
+            printf("%s | %d | R$ %.2f\n", c->cliente,
+                   c->contas[corrente].numero, 2.5f * saldoTotal(c));
+    }
+
+    printf("\n== CLIENTES NEGATIVOS (CONTA CORRENTE) ==\n");
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        Cliente *c = &b->clientes[i];
+        corrente = indiceTipo(c, CORRENTE);
+        if (corrente != -1 && c->contas[corrente].saldo < 0)
+            printf("%s | %d | R$ %.2f\n", c->cliente,
+                   c->contas[corrente].numero, c->contas[corrente].saldo);
+    }
+
+    printf("\n== CLIENTES APTOS AO SORTEIO ==\n");
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        Cliente *c = &b->clientes[i];
+        salario = indiceTipo(c, SALARIO);
+        if (salario != -1 && c->contas[salario].saldo >= 1000 &&
+            c->contas[salario].saldo <= 1500)
+            printf("%s | %d | R$ %.2f\n", c->cliente,
+                   c->contas[salario].numero, c->contas[salario].saldo);
+    }
+}
+
+/* Fibonacci escolhe tres participantes diferentes da lista de aptos. */
+void realizarSorteio(Banco *b) {
+    int *candidatos, ganhadores[3];
+    int quantidade = 0, escolhidos = 0;
+    int i, j, salario, a, atual, proximo, repetido;
+
+    candidatos = malloc(b->quantidadeClientes * sizeof(int));
+    if (candidatos == NULL && b->quantidadeClientes > 0) {
+        printf("Erro ao reservar memoria para o sorteio.\n");
+        return;
+    }
+
+    for (i = 0; i < b->quantidadeClientes; i++) {
+        salario = indiceTipo(&b->clientes[i], SALARIO);
+        if (salario != -1 && b->clientes[i].contas[salario].saldo >= 1000 &&
+            b->clientes[i].contas[salario].saldo <= 1500)
+            candidatos[quantidade++] = i;
+    }
+
+    if (quantidade < 3) {
+        printf("Sao necessarios 3 participantes. Encontrados: %d\n", quantidade);
+        free(candidatos);
+        return;
+    }
+
+    a = rand() % quantidade;
+    atual = rand() % quantidade;
+
+    for (i = 0; i < quantidade + 10 && escolhidos < 3; i++) {
+        if (i == 0)
+            proximo = a;
+        else if (i == 1)
+            proximo = atual;
+        else {
+            proximo = (a + atual) % quantidade;
+            a = atual;
+            atual = proximo;
+        }
+
+        repetido = 0;
+        for (j = 0; j < escolhidos; j++)
+            if (ganhadores[j] == proximo) repetido = 1;
+
+        if (!repetido)
+            ganhadores[escolhidos++] = proximo;
+    }
+
+    for (i = 0; i < quantidade && escolhidos < 3; i++) {
+        repetido = 0;
+        for (j = 0; j < escolhidos; j++)
+            if (ganhadores[j] == i) repetido = 1;
+        if (!repetido)
+            ganhadores[escolhidos++] = i;
+    }
+
+    printf("\n== RESULTADO DO SORTEIO ==\n");
+    printf("1 lugar: %s\n", b->clientes[candidatos[ganhadores[0]]].cliente);
+    printf("2 lugar: %s\n", b->clientes[candidatos[ganhadores[1]]].cliente);
+    printf("3 lugar: %s\n", b->clientes[candidatos[ganhadores[2]]].cliente);
+
+    free(candidatos);
+}

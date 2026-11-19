@@ -1,0 +1,34 @@
+#include <stdio.h>
+
+FILE* abrirArquivo() {
+FILE*arquivo = fopen("segredo.txt", "w+");
+
+if(arquivo == 0) {
+printf("Erro ao abrir o arquivo\n");
+} else {
+printf("Arquivo aberto com sucesso\n");
+}
+
+return arquivo;
+}
+
+FILE* fecharArquivo(FILE * arquivo){
+fclose(arquivo);
+
+if(arquivo == 0) {
+printf("Erro ao fechar o arquivo\n");
+} else {
+printf("Arquivo fechado com sucesso\n");
+}
+}
+
+
+
+int main() {
+FILE * arquivo;
+arquivo = abrirArquivo();
+fprintf(arquivo, "Hello, World!");
+fecharArquivo(arquivo);
+
+return 0;
+}
